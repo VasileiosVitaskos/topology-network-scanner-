@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  backend:
+    build: { context: ./backend, dockerfile: Dockerfile }
+    container_name: topo-backend
+    ports: ["5000:5000"]
+    volumes:
+      - ./backend/data:/app/data:ro
+      - ./backend/config:/app/config:ro
+      - ./db:/app/db
+    env_file: [.env]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks: [topo-net]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: http://localhost:5000
+    container_name: topo-frontend
+    ports: ["3000:3000"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [topo-net]
+
+networks:
+  topo-net:
+    driver: bridge
