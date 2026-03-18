@@ -9,7 +9,9 @@ export default function ChatAssistant() {
   const [loading, setLoading] = useState(false);
   const endRef = useRef(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -19,9 +21,15 @@ export default function ChatAssistant() {
     setLoading(true);
     try {
       const res = await api.askAssistant(userMsg);
-      setMessages(prev => [...prev, { role: 'system', content: res.response || res.error || 'No response.' }]);
+      setMessages(prev => [...prev, {
+        role: 'system',
+        content: res.response || res.error || 'No response.',
+      }]);
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'system', content: 'Connection to AI backend failed.' }]);
+      setMessages(prev => [...prev, {
+        role: 'system',
+        content: 'Connection to AI backend failed.',
+      }]);
     } finally {
       setLoading(false);
     }
@@ -44,11 +52,14 @@ export default function ChatAssistant() {
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSend()}
+          onKeyDown={e => e.key === 'Enter' && !loading && handleSend()}
           placeholder="Ask about threats, topology, or recommendations..."
           className="chat-input"
+          disabled={loading}
         />
-        <button onClick={handleSend} disabled={loading} className="chat-send-btn">Send</button>
+        <button onClick={handleSend} disabled={loading || !input.trim()} className="chat-send-btn">
+          Send
+        </button>
       </div>
     </div>
   );

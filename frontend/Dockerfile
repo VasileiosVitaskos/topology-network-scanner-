@@ -12,7 +12,7 @@ ENV REACT_APP_API_URL=$REACT_APP_API_URL
 
 RUN npm run build
 
-# Serve with a lightweight server
+# Serve with lightweight static server
 FROM node:20-alpine
 WORKDIR /app
 RUN npm install -g serve

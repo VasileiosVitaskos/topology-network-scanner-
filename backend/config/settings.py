@@ -2,9 +2,15 @@
 config/settings.py
 Central configuration loader.
 Reads .env for secrets, domains.yaml for domain presets.
+
+Usage:
+    from config.settings import get_config
+    config = get_config()              # default domain from .env
+    config = get_config("manufacturing")  # override domain
 """
 
 import os
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -12,9 +18,14 @@ from typing import Dict, List, Optional
 import yaml
 from dotenv import load_dotenv
 
-# ── Load .env ────────────────────────────────────────────────
+# ── Resolve project root & load .env ─────────────────────────
+# ROOT_DIR = backend/ (parent of config/)
 ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
+# Also try project root (parent of backend/) for non-Docker setups
+load_dotenv(ROOT_DIR.parent / ".env")
+
+logger = logging.getLogger(__name__)
 
 
 # ── Typed Config Objects ─────────────────────────────────────
@@ -25,14 +36,17 @@ class DatabaseConfig:
     db_path: str = os.getenv("DB_PATH", "/app/db/topo_scanner.db")
 
 
-# OpenAI config — RESERVED, not used in pure math mode
-# Uncomment if LLM interpretation is needed for final demo
 @dataclass
 class OpenAIConfig:
+    """GPT integration for Quick Scan analysis + Chat assistant."""
     api_key: str = os.getenv("OPENAI_API_KEY", "")
     model: str = os.getenv("OPENAI_MODEL", "gpt-4.1")
     temperature: float = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
     max_tokens: int = int(os.getenv("OPENAI_MAX_TOKENS", "4096"))
+
+    @property
+    def available(self) -> bool:
+        return bool(self.api_key and self.api_key.startswith("sk-"))
 
 
 @dataclass
@@ -45,13 +59,21 @@ class FlaskConfig:
 
 @dataclass
 class DomainWeights:
+    """
+    Blending weights for the three distance layers:
+        alpha = Pearson correlation (instantaneous coupling)
+        beta  = DTW (time-lagged similarity)
+        gamma = Granger causality (causal relationships)
+    Must sum to 1.0.
+    """
     alpha: float = 0.2
     beta: float = 0.6
     gamma: float = 0.2
 
     def __post_init__(self):
         total = self.alpha + self.beta + self.gamma
-        assert abs(total - 1.0) < 1e-6, f"Weights must sum to 1.0, got {total}"
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"Domain weights must sum to 1.0, got {total:.4f}")
 
 
 @dataclass
@@ -59,8 +81,8 @@ class DomainConfig:
     name: str = "water_treatment"
     description: str = ""
     weights: DomainWeights = field(default_factory=DomainWeights)
-    window_sec: int = 60
-    step_sec: int = 10
+    window_sec: float = 60       # float to support sub-second windows (power_grid)
+    step_sec: float = 10         # float to support sub-second steps
     max_sensors: int = 86
     dominant_physics: str = "slow_fluid_dynamics"
     datasets: List[str] = field(default_factory=list)
@@ -108,16 +130,25 @@ class TopoConfig:
     matrix: MatrixConfig = field(default_factory=MatrixConfig)
     deny_filter: DenyFilterConfig = field(default_factory=DenyFilterConfig)
     all_domains: Dict[str, DomainConfig] = field(default_factory=dict)
+    data_dir: str = os.getenv("DATA_DIR", "/app/data")
     max_dimension: int = int(os.getenv("TOPO_MAX_DIMENSION", "3"))
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
 
+# ── YAML Loader ──────────────────────────────────────────────
+
 def _load_domains_yaml() -> dict:
-    """Load config/domains.yaml."""
-    yaml_path = ROOT_DIR / "config" / "domains.yaml"
-    if yaml_path.exists():
-        with open(yaml_path) as f:
-            return yaml.safe_load(f)
+    """Load config/domains.yaml. Tries multiple paths for flexibility."""
+    candidates = [
+        ROOT_DIR / "config" / "domains.yaml",
+        ROOT_DIR / "domains.yaml",
+        Path("config") / "domains.yaml",
+    ]
+    for path in candidates:
+        if path.exists():
+            with open(path) as f:
+                return yaml.safe_load(f) or {}
+    logger.warning("domains.yaml not found, using defaults")
     return {}
 
 
@@ -130,9 +161,9 @@ def _build_domain_config(name: str, raw: dict) -> DomainConfig:
             beta=raw.get("beta", 0.6),
             gamma=raw.get("gamma", 0.2),
         ),
-        window_sec=raw.get("window_sec", 60),
-        step_sec=raw.get("step_sec", 10),
-        max_sensors=raw.get("max_sensors", 86),
+        window_sec=float(raw.get("window_sec", 60)),
+        step_sec=float(raw.get("step_sec", 10)),
+        max_sensors=int(raw.get("max_sensors", 86)),
         dominant_physics=raw.get("dominant_physics", ""),
         datasets=raw.get("datasets", []),
     )
@@ -141,7 +172,7 @@ def _build_domain_config(name: str, raw: dict) -> DomainConfig:
 def load_config(domain_name: Optional[str] = None) -> TopoConfig:
     """
     Build the full config.
-    
+
     Args:
         domain_name: Override the default domain from .env.
                      Options: water_treatment, power_grid, manufacturing,
@@ -192,9 +223,10 @@ def load_config(domain_name: Optional[str] = None) -> TopoConfig:
         t_recon_sec=deny_raw.get("t_recon_sec", 60),
     )
 
-    return TopoConfig(
+    config = TopoConfig(
         database=DatabaseConfig(),
         flask=FlaskConfig(),
+        openai=OpenAIConfig(),
         domain=active_domain,
         anomaly=anomaly,
         filtration=filtration,
@@ -202,6 +234,15 @@ def load_config(domain_name: Optional[str] = None) -> TopoConfig:
         deny_filter=deny_cfg,
         all_domains=all_domains,
     )
+
+    logger.info(
+        f"Config loaded: domain={active_domain.name}, "
+        f"weights=({active_domain.weights.alpha}/{active_domain.weights.beta}/{active_domain.weights.gamma}), "
+        f"window={active_domain.window_sec}s, max_sensors={active_domain.max_sensors}, "
+        f"AI={'available' if config.openai.available else 'disabled'}"
+    )
+
+    return config
 
 
 # ── Singleton ────────────────────────────────────────────────

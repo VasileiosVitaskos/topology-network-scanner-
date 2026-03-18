@@ -1,82 +1,70 @@
 """
-app/connectors/file_connector.py
+connectors/file_connector.py
 Reads firewall/IDS log files and converts to LogEntry objects.
 
 Supports:
-    - CSV format (comma or semicolon separated)
-    - Syslog format (standard firewall text logs)
+    - CSV format (comma, semicolon, tab separated)
+    - Syslog format (standard iptables/firewall text logs)
     - Palo Alto CSV export
     - Generic timestamp + src + dst + action format
 
-Use case: 
-    Periklis gave us real firewall logs as files.
-    This connector reads them and feeds to the engine.
-    
-    Also used for: HAI dataset, BATADAL dataset, SWaT dataset.
+Usage:
+    conn = FileConnector("path/to/firewall_logs.csv")
+    if conn.connect():
+        logs = conn.get_logs()
+        topology = conn.get_topology()
+        conn.disconnect()
 """
 
-import os
 import csv
+import datetime
+import logging
 import re
 import time
 from pathlib import Path
 from typing import List, Optional
+
 from app.models.schemas import LogEntry
 from connectors.base import BaseConnector
+
+logger = logging.getLogger(__name__)
 
 
 class FileConnector(BaseConnector):
     """
     Reads log files from disk.
-    Auto-detects format (CSV, syslog, HAI, BATADAL).
+    Auto-detects format (CSV, syslog).
     """
 
     def __init__(self, file_path: str):
         """
         Args:
             file_path: path to log file or directory of log files
-                      e.g., "backend/data/firewall_logs.csv"
-                      e.g., "backend/data/hai/"
         """
         self.file_path = Path(file_path)
         self._logs: List[LogEntry] = []
         self._loaded = False
-        self._format = None  # auto-detected
+        self._last_error = ""
 
     def connect(self) -> bool:
-        """
-        Check that the file/directory exists.
-        Doesn't load yet — that happens on first get_logs().
-        """
+        """Check that the file/directory exists."""
         if self.file_path.exists():
-            self._loaded = False  # Force reload
+            self._loaded = False
             return True
-        print(f"File not found: {self.file_path}")
+        self._last_error = f"File not found: {self.file_path}"
+        logger.warning(self._last_error)
         return False
 
-    def get_logs(
-        self,
-        since: float = 0,
-        limit: int = 100,
-    ) -> List[LogEntry]:
-        """
-        Read and parse log file into LogEntry objects.
-        Caches after first read — file doesn't change.
-        """
-        # Load on first call
+    def get_logs(self, since: float = 0, limit: int = 100) -> List[LogEntry]:
+        """Read and parse log file into LogEntry objects. Caches after first read."""
         if not self._loaded:
             self._load_file()
 
-        # Filter by timestamp
         filtered = [l for l in self._logs if l.timestamp > since]
-
-        # Apply limit
         return filtered[:limit]
 
     def get_topology(self) -> List[dict]:
-        """
-        Extract topology from logs — unique IPs seen.
-        """
+        """Extract unique IPs from logs as topology."""
         if not self._loaded:
             self._load_file()
 
@@ -93,61 +81,47 @@ class FileConnector(BaseConnector):
         ]
 
     def disconnect(self) -> None:
-        """Nothing to close for files."""
         self._logs = []
         self._loaded = False
 
     def is_connected(self) -> bool:
         return self.file_path.exists()
 
+    def get_last_error(self) -> str:
+        return self._last_error
+
     # ── File Loading ──────────────────────────────────────
 
     def _load_file(self) -> None:
-        """
-        Auto-detect format and parse.
-        """
+        """Auto-detect format and parse."""
         self._logs = []
 
-        if self.file_path.is_dir():
-            # Directory — load all CSV files in it
-            for f in sorted(self.file_path.glob("*.csv")):
-                self._logs.extend(self._parse_csv(f))
-        elif self.file_path.suffix == '.csv':
-            self._logs = self._parse_csv(self.file_path)
-        elif self.file_path.suffix in ('.log', '.txt'):
-            self._logs = self._parse_syslog(self.file_path)
-        else:
-            # Try CSV first, then syslog
-            try:
+        try:
+            if self.file_path.is_dir():
+                for f in sorted(self.file_path.glob("*.csv")):
+                    self._logs.extend(self._parse_csv(f))
+            elif self.file_path.suffix == '.csv':
                 self._logs = self._parse_csv(self.file_path)
-            except Exception:
+            elif self.file_path.suffix in ('.log', '.txt'):
                 self._logs = self._parse_syslog(self.file_path)
+            else:
+                try:
+                    self._logs = self._parse_csv(self.file_path)
+                except Exception:
+                    self._logs = self._parse_syslog(self.file_path)
+        except Exception as e:
+            self._last_error = f"Failed to load {self.file_path}: {e}"
+            logger.error(self._last_error)
 
         self._loaded = True
-        print(f"Loaded {len(self._logs)} logs from {self.file_path}")
+        logger.info(f"Loaded {len(self._logs)} logs from {self.file_path}")
 
     # ── CSV Parser ────────────────────────────────────────
 
     def _parse_csv(self, path: Path) -> List[LogEntry]:
-        """
-        Parse CSV log file.
-        
-        Auto-detects columns by header names.
-        Handles: comma, semicolon, tab separators.
-        
-        Common column names it recognizes:
-            timestamp, time, date, datetime
-            src_ip, source, src, source_ip
-            dst_ip, dest, dst, destination_ip
-            src_port, source_port
-            dst_port, dest_port, destination_port
-            protocol, proto
-            action, policy_action
-            bytes, bytes_sent, total_bytes
-        """
+        """Parse CSV log file with auto-detected separator and column names."""
         logs = []
 
-        # Detect separator
         with open(path, 'r', encoding='utf-8', errors='replace') as f:
             first_line = f.readline()
             if ';' in first_line and ',' not in first_line:
@@ -159,8 +133,6 @@ class FileConnector(BaseConnector):
 
         with open(path, 'r', encoding='utf-8', errors='replace') as f:
             reader = csv.DictReader(f, delimiter=delimiter)
-
-            # Normalize headers — lowercase, strip spaces
             if reader.fieldnames:
                 reader.fieldnames = [
                     h.strip().lower().replace(' ', '_')
@@ -173,52 +145,42 @@ class FileConnector(BaseConnector):
                     if log:
                         logs.append(log)
                 except Exception:
-                    continue  # Skip malformed rows
+                    continue
 
         return logs
 
     def _row_to_log_entry(self, row: dict) -> Optional[LogEntry]:
-        """
-        Convert a CSV row to LogEntry.
-        Tries multiple column name variations.
-        """
+        """Convert a CSV row to LogEntry, trying multiple column name variations."""
         def get(names: list, default=""):
-            """Try multiple column names, return first match."""
             for name in names:
                 if name in row and row[name]:
                     return row[name].strip()
             return default
 
-        # Timestamp
         ts_str = get(['timestamp', 'time', 'datetime', 'date',
                        'start_time', 'event_time'])
         timestamp = self._parse_timestamp(ts_str)
 
-        # IPs
         src_ip = get(['src_ip', 'source', 'src', 'source_ip',
                        'sourceip', 'src_addr'])
         dst_ip = get(['dst_ip', 'dest', 'dst', 'destination_ip',
                        'destip', 'dst_addr', 'destination'])
 
         if not src_ip and not dst_ip:
-            return None  # Can't use a log without IPs
+            return None
 
-        # Ports
         src_port = int(get(['src_port', 'source_port', 'sport'], '0') or 0)
         dst_port = int(get(['dst_port', 'dest_port', 'dport',
                             'destination_port'], '0') or 0)
 
-        # Protocol
         protocol = get(['protocol', 'proto', 'ip_protocol'], 'TCP').upper()
 
-        # Action
         action_raw = get(['action', 'policy_action', 'event_action',
                           'result'], 'ALLOW').upper()
         action = "DENY" if any(
             x in action_raw for x in ['DENY', 'DROP', 'BLOCK', 'REJECT']
         ) else "ALLOW"
 
-        # Bytes
         bytes_val = int(get(['bytes', 'bytes_sent', 'total_bytes',
                              'byte'], '0') or 0)
 
@@ -237,16 +199,9 @@ class FileConnector(BaseConnector):
     # ── Syslog Parser ─────────────────────────────────────
 
     def _parse_syslog(self, path: Path) -> List[LogEntry]:
-        """
-        Parse standard syslog format.
-        
-        Example lines:
-        Mar 11 10:00:01 firewall kernel: DROP IN=eth0 
-            SRC=192.168.1.5 DST=192.168.1.1 PROTO=TCP SPT=54321 DPT=22
-        """
+        """Parse iptables/firewall syslog format."""
         logs = []
 
-        # Pattern: SRC=x DST=x PROTO=x SPT=x DPT=x
         pattern = re.compile(
             r'SRC=([\d.]+).*?DST=([\d.]+).*?'
             r'PROTO=(\w+).*?SPT=(\d+).*?DPT=(\d+)',
@@ -258,7 +213,8 @@ class FileConnector(BaseConnector):
                 match = pattern.search(line)
                 if match:
                     action = "DENY" if any(
-                        x in line.upper() for x in ['DROP', 'DENY', 'BLOCK', 'REJECT']
+                        x in line.upper()
+                        for x in ['DROP', 'DENY', 'BLOCK', 'REJECT']
                     ) else "ALLOW"
 
                     logs.append(LogEntry(
@@ -278,22 +234,17 @@ class FileConnector(BaseConnector):
 
     @staticmethod
     def _parse_timestamp(ts_str: str) -> float:
-        """
-        Try multiple timestamp formats.
-        Returns Unix timestamp.
-        """
+        """Parse timestamp string in common formats → Unix timestamp."""
         if not ts_str:
             return time.time()
 
-        # Already a number (unix timestamp)
         try:
             val = float(ts_str)
-            if val > 1000000000:  # Looks like Unix timestamp
+            if val > 1_000_000_000:
                 return val
         except ValueError:
             pass
 
-        # Common formats
         formats = [
             "%Y-%m-%d %H:%M:%S",
             "%Y-%m-%dT%H:%M:%S",
@@ -304,26 +255,22 @@ class FileConnector(BaseConnector):
             "%m/%d/%Y %H:%M:%S",
         ]
 
-        import datetime
         for fmt in formats:
             try:
                 dt = datetime.datetime.strptime(ts_str.strip(), fmt)
-                # If no year (syslog), assume current year
                 if dt.year == 1900:
                     dt = dt.replace(year=datetime.datetime.now().year)
                 return dt.timestamp()
             except ValueError:
                 continue
 
-        return time.time()  # Fallback: now
+        return time.time()
 
     @staticmethod
     def _extract_syslog_timestamp(line: str) -> float:
-        """Extract timestamp from syslog line start."""
-        # "Mar 11 10:00:01 ..."
+        """Extract timestamp from syslog line: 'Mar 11 10:00:01 ...'"""
         match = re.match(r'^(\w{3}\s+\d+\s+\d+:\d+:\d+)', line)
         if match:
-            import datetime
             try:
                 dt = datetime.datetime.strptime(match.group(1), "%b %d %H:%M:%S")
                 dt = dt.replace(year=datetime.datetime.now().year)

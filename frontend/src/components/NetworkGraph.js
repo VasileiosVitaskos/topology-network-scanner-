@@ -9,42 +9,61 @@ export default function NetworkGraph({ scanResult, dataset }) {
 
   useEffect(() => {
     if (!svgRef.current || !containerRef.current) return;
+
     const w = containerRef.current.clientWidth;
     const h = containerRef.current.clientHeight;
+    if (w === 0 || h === 0) return;
+
     d3.select(svgRef.current).selectAll('*').remove();
     const svg = d3.select(svgRef.current).attr('width', w).attr('height', h);
 
-    const color = d3.scaleOrdinal()
+    // Monochrome: segments differ by opacity, not color
+    const opacityScale = d3.scaleOrdinal()
       .domain(topology.segments)
-      .range(['#3b82f6', '#8b5cf6', '#22c55e', '#f59e0b', '#ec4899']);
+      .range([0.9, 0.65, 0.45, 0.3]);
 
     const sim = d3.forceSimulation(topology.nodes)
-      .force('link', d3.forceLink(topology.links).id(d => d.id).distance(65))
-      .force('charge', d3.forceManyBody().strength(-140))
+      .force('link', d3.forceLink(topology.links).id(d => d.id).distance(60))
+      .force('charge', d3.forceManyBody().strength(-120))
       .force('center', d3.forceCenter(w / 2, h / 2))
-      .force('collision', d3.forceCollide().radius(22));
+      .force('collision', d3.forceCollide().radius(20));
 
-    const link = svg.append('g').selectAll('line').data(topology.links).join('line')
-      .attr('stroke', '#27272a').attr('stroke-width', 1.5);
+    const link = svg.append('g')
+      .selectAll('line')
+      .data(topology.links)
+      .join('line')
+      .attr('stroke', '#222228')
+      .attr('stroke-width', 1);
 
-    const node = svg.append('g').selectAll('circle').data(topology.nodes).join('circle')
-      .attr('r', d => d.isRouter ? 11 : 7)
-      .attr('fill', d => involved.includes(d.id) ? '#ef4444' : color(d.segment))
-      .attr('stroke', d => involved.includes(d.id) ? '#fca5a5' : 'transparent')
+    const node = svg.append('g')
+      .selectAll('circle')
+      .data(topology.nodes)
+      .join('circle')
+      .attr('r', d => d.isRouter ? 10 : 6)
+      .attr('fill', d => {
+        if (involved.includes(d.id)) return '#4c8dff';
+        return `rgba(142, 142, 150, ${opacityScale(d.segment)})`;
+      })
+      .attr('stroke', d => involved.includes(d.id) ? 'rgba(76, 141, 255, 0.4)' : 'none')
       .attr('stroke-width', d => involved.includes(d.id) ? 3 : 0)
       .style('cursor', 'grab')
       .call(drag(sim));
 
-    const label = svg.append('g').selectAll('text').data(topology.nodes).join('text')
+    const label = svg.append('g')
+      .selectAll('text')
+      .data(topology.nodes)
+      .join('text')
       .text(d => d.label)
-      .attr('font-size', 10)
-      .attr('fill', '#71717a')
+      .attr('font-size', 9)
+      .attr('fill', d => involved.includes(d.id) ? '#4c8dff' : '#58585f')
       .attr('font-family', "'JetBrains Mono', monospace")
-      .attr('dx', 14).attr('dy', 4);
+      .attr('dx', 12)
+      .attr('dy', 3);
 
     sim.on('tick', () => {
-      link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-          .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      link
+        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
       node.attr('cx', d => d.x).attr('cy', d => d.y);
       label.attr('x', d => d.x).attr('y', d => d.y);
     });
@@ -54,9 +73,15 @@ export default function NetworkGraph({ scanResult, dataset }) {
 
   function drag(sim) {
     return d3.drag()
-      .on('start', (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('start', (e, d) => {
+        if (!e.active) sim.alphaTarget(0.3).restart();
+        d.fx = d.x; d.fy = d.y;
+      })
       .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
-      .on('end', (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; });
+      .on('end', (e, d) => {
+        if (!e.active) sim.alphaTarget(0);
+        d.fx = null; d.fy = null;
+      });
   }
 
   return (
@@ -93,11 +118,24 @@ function genTopology(ds) {
     ];
     return { nodes, links, segments: ['plc', 'scada', 'infra', 'workstation'] };
   }
-  const nodes = [...Array(8)].map((_, i) => ({ id: `H${i+1}`, label: `Host${i+1}`, segment: 'internal', isRouter: false }));
-  [...Array(3)].map((_, i) => nodes.push({ id: `S${i+1}`, label: `Server${i+1}`, segment: 'servers', isRouter: false }));
-  nodes.push({ id: 'RTR', label: 'Router', segment: 'infra', isRouter: true }, { id: 'FW', label: 'Firewall', segment: 'infra', isRouter: true });
-  const links = [...Array(8)].map((_, i) => ({ source: `H${i+1}`, target: 'RTR' }));
-  [...Array(3)].map((_, i) => links.push({ source: `S${i+1}`, target: 'FW' }));
+
+  // IT network topology
+  const nodes = [];
+  for (let i = 0; i < 8; i++) {
+    nodes.push({ id: `H${i + 1}`, label: `Host${i + 1}`, segment: 'internal', isRouter: false });
+  }
+  for (let i = 0; i < 3; i++) {
+    nodes.push({ id: `S${i + 1}`, label: `Server${i + 1}`, segment: 'servers', isRouter: false });
+  }
+  nodes.push(
+    { id: 'RTR', label: 'Router', segment: 'infra', isRouter: true },
+    { id: 'FW', label: 'Firewall', segment: 'infra', isRouter: true },
+  );
+
+  const links = [];
+  for (let i = 0; i < 8; i++) links.push({ source: `H${i + 1}`, target: 'RTR' });
+  for (let i = 0; i < 3; i++) links.push({ source: `S${i + 1}`, target: 'FW' });
   links.push({ source: 'RTR', target: 'FW' });
+
   return { nodes, links, segments: ['internal', 'servers', 'infra'] };
 }

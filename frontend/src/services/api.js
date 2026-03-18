@@ -1,16 +1,18 @@
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 class ApiService {
-  async runScan(dataset = 'swat', options = {}) {
+  async runScan(dataset = 'hai', scanType = 'deep', options = {}) {
     const r = await fetch(`${API_URL}/scan/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dataset, ...options })
+      body: JSON.stringify({ dataset, scan_type: scanType, ...options }),
     });
     return r.json();
   }
 
-  async getScanStatus() { return (await fetch(`${API_URL}/scan/status`)).json(); }
+  async getScanStatus() {
+    return (await fetch(`${API_URL}/scan/status`)).json();
+  }
 
   async getHistory(limit = 50, offset = 0, status = null) {
     const p = new URLSearchParams({ limit, offset });
@@ -18,48 +20,63 @@ class ApiService {
     return (await fetch(`${API_URL}/history/?${p}`)).json();
   }
 
-  async getScan(id) { return (await fetch(`${API_URL}/history/${id}`)).json(); }
-  async getStats() { return (await fetch(`${API_URL}/history/stats`)).json(); }
-  async exportCSV() { return (await fetch(`${API_URL}/history/export`)).blob(); }
-  async getNodes(incl = false) { return (await fetch(`${API_URL}/topology/nodes?include_removed=${incl}`)).json(); }
-  async getPendingNodes() { return (await fetch(`${API_URL}/topology/nodes/pending`)).json(); }
+  async getScan(id) {
+    return (await fetch(`${API_URL}/history/${id}`)).json();
+  }
 
-  async addNode(id, label, seg, typ) {
+  async getStats() {
+    return (await fetch(`${API_URL}/history/stats`)).json();
+  }
+
+  async exportCSV() {
+    return (await fetch(`${API_URL}/history/export`)).blob();
+  }
+
+  async getNodes(includeRemoved = false) {
+    return (await fetch(`${API_URL}/topology/nodes?include_removed=${includeRemoved}`)).json();
+  }
+
+  async getPendingNodes() {
+    return (await fetch(`${API_URL}/topology/nodes/pending`)).json();
+  }
+
+  async addNode(id, label, segment, nodeType) {
     return (await fetch(`${API_URL}/topology/nodes`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ node_id: id, label, segment: seg, node_type: typ })
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: id, label, segment, node_type: nodeType }),
     })).json();
   }
 
-  async confirmNode(id, label, seg, typ) {
+  async confirmNode(id, label, segment, nodeType) {
     return (await fetch(`${API_URL}/topology/nodes/${id}/confirm`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label, segment: seg, node_type: typ })
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label, segment, node_type: nodeType }),
     })).json();
   }
 
-  async denyNode(id) { return (await fetch(`${API_URL}/topology/nodes/${id}/deny`, { method: 'PUT' })).json(); }
-
-  async getLogs(ds = 'swat', since = 0, limit = 100) {
-    const p = new URLSearchParams({ dataset: ds, since, limit });
-    return (await fetch(`${API_URL}/logs/?${p}`)).json();
+  async denyNode(id) {
+    return (await fetch(`${API_URL}/topology/nodes/${id}/deny`, { method: 'PUT' })).json();
   }
 
-  async getHealth() { return (await fetch(`${API_URL}/health`)).json(); }
+  async getHealth() {
+    return (await fetch(`${API_URL}/health`)).json();
+  }
 
   async askAssistant(prompt) {
     return (await fetch(`${API_URL}/assistant/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({ prompt }),
     })).json();
   }
 
-  async connectLive(host, username, password, device_type = 'cisco_ios') {
+  async connectLive(host, username, password, deviceType = 'cisco_ios', port = 22) {
     return (await fetch(`${API_URL}/topology/connect_live`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host, username, password, device_type })
+      body: JSON.stringify({ host, username, password, device_type: deviceType, port }),
     })).json();
   }
 }

@@ -4,5 +4,7 @@ node_modules/
 build/
 .env
 db/
-data/
 *.tar.gz
+*.h5
+.DS_Store
+data/

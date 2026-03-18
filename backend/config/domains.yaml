@@ -1,3 +1,23 @@
+# ══════════════════════════════════════════════════════════════
+# Domain Presets — Physics-Informed Detection Parameters
+# ══════════════════════════════════════════════════════════════
+#
+# Each domain tunes the engine for a specific OT environment:
+#
+#   alpha  = Pearson correlation weight  (instantaneous coupling)
+#   beta   = DTW distance weight         (time-lagged similarity)
+#   gamma  = Granger causality weight    (causal direction)
+#
+#   window_sec  = sliding window duration in seconds
+#   step_sec    = step between windows (overlap = window - step)
+#   max_sensors = subsample to this many sensors (performance cap)
+#
+# The weights reflect the dominant physics:
+#   - Water treatment: slow fluid dynamics → DTW dominates (beta=0.6)
+#   - Power grid: instantaneous AC → Pearson dominates (alpha=0.6)
+#   - Manufacturing: causal chains → Granger dominates (gamma=0.5)
+# ══════════════════════════════════════════════════════════════
+
 domains:
   water_treatment:
     description: "Slow fluid dynamics (SWaT, BATADAL)"
@@ -9,6 +29,7 @@ domains:
     max_sensors: 30
     dominant_physics: "slow_fluid_dynamics"
     datasets: ["swat", "batadal"]
+
   power_grid:
     description: "Instantaneous AC coupling"
     alpha: 0.6
@@ -19,6 +40,7 @@ domains:
     max_sensors: 50
     dominant_physics: "instantaneous_ac"
     datasets: []
+
   manufacturing:
     description: "Causal process chains (HAI)"
     alpha: 0.2
@@ -29,6 +51,7 @@ domains:
     max_sensors: 30
     dominant_physics: "causal_process_chains"
     datasets: ["hai"]
+
   gas_pipeline:
     description: "Pressure wave propagation"
     alpha: 0.2
@@ -39,6 +62,7 @@ domains:
     max_sensors: 40
     dominant_physics: "pressure_wave"
     datasets: ["gas_pipeline"]
+
   it_network:
     description: "Mixed IT traffic (CICIDS2017)"
     alpha: 0.4
@@ -50,24 +74,36 @@ domains:
     dominant_physics: "mixed"
     datasets: ["cicids"]
 
+
+# ── Detection Thresholds ─────────────────────────────────────
+
 anomaly_scan:
-  h2_alert_threshold: 1
-  h1_warning_sigma: 3.0
-  h0_info_sigma: 2.0
-  min_consecutive_windows: 3
+  h2_alert_threshold: 1        # β₂ ≥ 1 triggers Gate 3
+  h1_warning_sigma: 3.0        # β₁ z-score for warning
+  h0_info_sigma: 2.0           # β₀ z-score for info
+  min_consecutive_windows: 3   # MID→HIGH escalation threshold
   buffer_short_sec: 60
   buffer_medium_sec: 3600
   buffer_long_sec: 86400
 
+
+# ── Filtration Parameters ────────────────────────────────────
+
 filtration:
-  lambda: 0.5
-  knn_k: 5
-  knn_gamma_scale: 1.75
+  lambda: 0.5                  # Blend: λ·ε_domain + (1-λ)·ε_local
+  knn_k: 5                     # k for kNN distance scale
+  knn_gamma_scale: 1.75        # Multiplier on median kNN distance
+
+
+# ── EMA Decay ────────────────────────────────────────────────
 
 matrix:
-  decay_factor: 0.95
+  decay_factor: 0.95           # Fast layer: ~2 min half-life
   novelty_memory_sec: 3600
 
+
+# ── Reconnaissance Pre-Filter ────────────────────────────────
+
 deny_filter:
-  k_recon: 10
-  t_recon_sec: 60
+  k_recon: 10                  # DENY events to flag as recon
+  t_recon_sec: 60              # Time window for recon detection

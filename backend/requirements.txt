@@ -1,18 +1,35 @@
-# Web
+# ══════════════════════════════════════════════════════════
+# Topo Scanner v7 — Backend Dependencies
+# ══════════════════════════════════════════════════════════
+# Install: pip install -r requirements.txt
+# If gudhi fails on Windows: conda install -c conda-forge gudhi
+
+# ── Web Framework ─────────────────────────────────────────
 flask==3.1.0
 flask-cors==5.0.1
+gunicorn==23.0.0              # Production WSGI server (Docker)
 
-# Data
+# ── Data Processing ───────────────────────────────────────
 pandas==2.2.3
 numpy==2.2.3
 
-# Topological engine
-scipy
-gudhi
-dtaidistance
-statsmodels
-networkx
+# ── Topological Engine ────────────────────────────────────
+scipy==1.15.2                 # Optimization (Wasserstein LP), sparse matrices
+gudhi==3.11.0                 # Persistent homology (Vietoris-Rips complex)
+networkx==3.4.2               # Graph operations (Ricci curvature, cliques)
+dtaidistance==2.3.12          # DTW distance (C-optimized backend)
+statsmodels==0.14.4           # Granger causality tests
 
-# Config
-python-dotenv
-pyyaml
+# ── AI / LLM ─────────────────────────────────────────────
+openai==1.82.0                # GPT-4.1 for Quick Scan + Chat assistant
+
+# ── Device Connectivity ───────────────────────────────────
+netmiko==4.5.0                # SSH to Cisco/Juniper/PAN-OS/Arista
+paramiko==3.5.1               # SSH transport (netmiko dependency, pin for stability)
+
+# ── Configuration ─────────────────────────────────────────
+python-dotenv==1.1.0
+pyyaml==6.0.2
+
+# ── Logging & Utilities ──────────────────────────────────
+colorama==0.4.6               # Colored terminal output (cross-platform)
